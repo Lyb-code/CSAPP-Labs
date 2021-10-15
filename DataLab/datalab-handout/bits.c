@@ -143,7 +143,9 @@ NOTES:
  *   Rating: 1
  */
 int bitXor(int x, int y) {
-  return 2;
+  int z = x & y; // Bit[1, 1] -> 1
+  int w = (~x) & (~y); // Bit[0, 0] -> 1
+  return (~z) & (~w); // Bit[1, 0], [0, 1] -> 1
 }
 /* 
  * tmin - return minimum two's complement integer 
@@ -152,9 +154,8 @@ int bitXor(int x, int y) {
  *   Rating: 1
  */
 int tmin(void) {
-
-  return 2;
-
+  int x = (0x80) << 24;
+  return x;
 }
 //2
 /*
@@ -165,7 +166,11 @@ int tmin(void) {
  *   Rating: 1
  */
 int isTmax(int x) {
-  return 2;
+  int tmax = 0x7f;
+  int k = 0xff;
+  k = ~(k << 24); //0x00ffffff
+  tmax = (tmax << 24) | k;//0x7fffffff
+  return ! (x ^ tmax);
 }
 /* 
  * allOddBits - return 1 if all odd-numbered bits in word set to 1
@@ -176,7 +181,11 @@ int isTmax(int x) {
  *   Rating: 2
  */
 int allOddBits(int x) {
-  return 2;
+  int k = 0xAA;
+  k = (k << 8) | k;
+  k = (k << 16) | k;//0xAAAAAAAA
+  x = x & k; // remove all even-numbered bits of x
+  return ! (x ^ k);
 }
 /* 
  * negate - return -x 
@@ -186,7 +195,7 @@ int allOddBits(int x) {
  *   Rating: 2
  */
 int negate(int x) {
-  return 2;
+  return (~x) + 1;
 }
 //3
 /* 
@@ -199,7 +208,11 @@ int negate(int x) {
  *   Rating: 3
  */
 int isAsciiDigit(int x) {
-  return 2;
+  int a = (x ^ 0x30) >> 4;
+  int b = (x & 0x8) >> 3;
+  int c = (x & 0x4) >> 2;
+  int d = (x & 0x2) >> 1;
+  return ! ((a) | (b & c) | (b & d));// return 1 if a = 0 And b & c = 0 And c & d = 0;
 }
 /* 
  * conditional - same as x ? y : z 
@@ -209,7 +222,13 @@ int isAsciiDigit(int x) {
  *   Rating: 3
  */
 int conditional(int x, int y, int z) {
-  return 2;
+  int a = !x; // [x->a]  0->1, others->0
+  a = (a << 1 | a);
+  a = (a << 2 | a);
+  a = (a << 4 | a);
+  a = (a << 8 | a);
+  a = (a << 16 | a);
+  return ((~a) & y) + (a & z);
 }
 /* 
  * isLessOrEqual - if x <= y  then return 1, else return 0 
@@ -219,7 +238,13 @@ int conditional(int x, int y, int z) {
  *   Rating: 3
  */
 int isLessOrEqual(int x, int y) {
-  return 2;
+  int hbx = x & 0x80000000; // keep only the highest bit of x
+  int hby = y & 0x80000000; // keep only the highest bit of y
+  int hbEqual = !(hbx ^ hby);// if highest bits are equal, return 1
+  int z = x + (~y) + 1;// x - y;
+  int ans1 = (!hbEqual) & ((hbx >> 31) & 1);// if hbEqual = 0, use hbx to judge to prevent overflow of z.
+  int ans2 = hbEqual & (((z >> 31) & 1) | (!(z ^ 0)));
+  return ans1 + ans2;
 }
 //4
 /* 
