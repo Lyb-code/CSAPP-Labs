@@ -165,12 +165,10 @@ int tmin(void) {
  *   Max ops: 10
  *   Rating: 1
  */
-int isTmax(int x) {
-  int tmax = 0x7f;
-  int k = 0xff;
-  k = ~(k << 24); //0x00ffffff
-  tmax = (tmax << 24) | k;//0x7fffffff
-  return ! (x ^ tmax);
+int isTmax(int x) { // Tmax + 1 = 0x10000000 = ~Tmax. Remember to exclude the case of x = -1.
+  int k = x + 1;
+  int m = k ^ (~x);// when x = -1 or Tmax, m = 0
+  return (!!k) & !m;
 }
 /* 
  * allOddBits - return 1 if all odd-numbered bits in word set to 1
@@ -238,8 +236,9 @@ int conditional(int x, int y, int z) {
  *   Rating: 3
  */
 int isLessOrEqual(int x, int y) {
-  int hbx = x & 0x80000000; // keep only the highest bit of x
-  int hby = y & 0x80000000; // keep only the highest bit of y
+  int k = 0x80 << 24;
+  int hbx = x & k; // keep only the highest bit of x
+  int hby = y & k; // keep only the highest bit of y
   int hbEqual = !(hbx ^ hby);// if highest bits are equal, return 1
   int z = x + (~y) + 1;// x - y;
   int ans1 = (!hbEqual) & ((hbx >> 31) & 1);// if hbEqual = 0, use hbx to judge to prevent overflow of z.
@@ -256,7 +255,12 @@ int isLessOrEqual(int x, int y) {
  *   Rating: 4 
  */
 int logicalNeg(int x) {
-  return 2;
+  x = (x >> 16) | x;
+  x = (x >> 8) | x;
+  x = (x >> 4) | x;
+  x = (x >> 2) | x;
+  x = (x >> 1) | x;
+  return (~x) & 1;
 }
 /* howManyBits - return the minimum number of bits required to represent x in
  *             two's complement
