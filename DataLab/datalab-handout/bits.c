@@ -275,7 +275,20 @@ int logicalNeg(int x) {
  *  Rating: 4
  */
 int howManyBits(int x) {
-  return 0;
+  int b16, b8, b4, b2, b1;
+  int sign = x>>31; // all 1 or all 0
+  x = ((~sign) & x) | (sign & (~x));// x < 0 --> ~x ; x > 0 --> x;
+  b16 = (!!(x >> 16)) << 4;// If the upper 16 bits have 1, at least the lower 16(1<<4) bits are required.
+  x = x >> b16;
+  b8 = (!!(x >> 8)) << 3;// If the remaning top 8 bits have 1, at least the lower 8(1<<3) bits are required.
+  x = x >> b8;
+  b4 = (!!(x >> 4)) << 2;// narrow the scope
+  x = x >> b4;
+  b2 = (!!(x >> 2)) << 1;
+  x = x >> b2;
+  b1 = (!!(x >> 1));
+  x = x >> b1;
+  return b16 + b8 + b4 + b2 + b1 + x + 1;
 }
 //float
 /* 
