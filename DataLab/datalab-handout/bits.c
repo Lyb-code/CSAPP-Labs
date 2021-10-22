@@ -290,7 +290,23 @@ int howManyBits(int x) {
  *   Rating: 4
  */
 unsigned floatScale2(unsigned uf) {
-  return 2;
+  int sign = 0x80000000 & uf;
+  int exp = (0x7f800000 & uf) >> 23;
+  int frac = 0x7fffff & uf;
+  if (exp == 0xff) {// NaN and infinity: do nothing
+    
+  } else if (exp == 0) {// Denormalized value
+    if ((frac >> 22) == 0) {
+      frac = frac << 1;
+    } else {
+      exp = 1;
+      frac = (frac << 1) & 0x007fffff;
+    }
+  } else {//Normalized value
+    exp += 1;
+  }
+  uf = sign | (exp << 23) | frac;
+  return uf;
 }
 /* 
  * floatFloat2Int - Return bit-level equivalent of expression (int) f
@@ -305,7 +321,31 @@ unsigned floatScale2(unsigned uf) {
  *   Rating: 4
  */
 int floatFloat2Int(unsigned uf) {
-  return 2;
+  int sign = uf >> 31;
+  int exp = (0x7f800000 & uf) >> 23;
+  int bias = (1 << 7) - 1;
+  int E = 0, ans = 0;
+  int frac = 0x7fffff & uf;
+  if (exp == 0xff) {// NaN and infinity
+    return 0x80000000u;
+  } else if (exp == 0) {// Denormalized value
+    E = 1 - bias;
+  } else {//Normalized value
+    E = exp - bias;
+    frac |= 0x800000;
+  }
+  //printf("%d %d \n", E, frac);
+  if (E > 30) { // prevent left shift overflow
+    return 0x80000000u;
+  } else if (E > 23) {
+    ans = frac << (E - 23);
+  } else if (E > -9) {// prevent the right shift length from being greater than 32
+    ans = frac >> (23 - E);
+  }
+  if (sign) {
+    ans = -ans;
+  }
+  return ans;
 }
 /* 
  * floatPower2 - Return bit-level equivalent of the expression 2.0^x
@@ -321,5 +361,18 @@ int floatFloat2Int(unsigned uf) {
  *   Rating: 4
  */
 unsigned floatPower2(int x) {
-    return 2;
+    int bias = 127;
+    if (x > 128) {
+      return 0x7f800000;
+    } else if (x > -150) {
+      x += bias;
+      if (x >= 0) { // Normalize
+        return x << 23;
+      } else { // Denormalize
+        return 1 << (23 + x);
+      }
+
+    } else {
+      return 0;
+    }
 }
