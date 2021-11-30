@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <getopt.h>
+#include <math.h>
 #define TRUE 1
 #define FALSE 0
 
@@ -13,6 +14,7 @@ typedef struct cache_line
     int* block;
 } cache_line_t;
 
+cache_line_t **cache_memory;
 int hits = 0, misses = 0, evictions = 0;
 int set_bits = 0, associativity = 0, block_bits = 0;
 bool help_flag = FALSE, verbose_flag = FALSE;
@@ -25,6 +27,22 @@ int main(int argc, char *argv[])
     getInputArguments(argc, argv);
     printf("set_bits:%d associativity:%d block_bits:%d\n", set_bits, associativity, block_bits);
     printf("help_flag:%d verbose_flag:%d trace:%s\n", help_flag, verbose_flag, trace);
+    // Allocate memory for cache
+    int set_num = pow(2, set_bits);
+    cache_memory = (cache_line_t **)calloc(set_num, sizeof(cache_line_t));// calloc can initialize allocated memory
+    if (cache_memory == NULL) return 0;//calloc can fail
+    for (int i = 0; i < set_num; i++) {
+        cache_memory[i] = (cache_line_t *)calloc(associativity, sizeof(cache_line_t));
+        if (cache_memory[i] == NULL) return 0;//calloc can fail
+    }
+    
+
+    // free memory for cache
+    for (int i = 0; i < set_num; i++) {
+        free(cache_memory[i]);
+    }
+    free(cache_memory);
+
     printSummary(0, 0, 0);
     return 0;
 }
