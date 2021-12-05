@@ -23,27 +23,36 @@ char transpose_submit_desc[] = "Transpose submission";
 void transpose_submit(int M, int N, int A[N][M], int B[M][N])
 {   
     int a, b, c, d, e, f, g, h;
-    int k, j, i;
+    int i, j, s, k;
     if (M == 32) { // 32 x 32
-        for (k = 0; k < 32; k += 8) {
-            for (j = 0; j < 32; j += 8) {
-                for (i = k; i < k + 8; i++) {
-                    a = A[i][j];
-                    b = A[i][j+1];
-                    c = A[i][j+2];
-                    d = A[i][j+3];
-                    e = A[i][j+4];
-                    f = A[i][j+5];
-                    g = A[i][j+6];
-                    h = A[i][j+7];
-                    B[j][i] = a;
-                    B[j+1][i] = b;
-                    B[j+2][i] = c;
-                    B[j+3][i] = d;
-                    B[j+4][i] = e;
-                    B[j+5][i] = f;
-                    B[j+6][i] = g;
-                    B[j+7][i] = h;
+        for (i = 0; i < N; i += 8) {
+            for (j = 0; j < M; j += 8) {
+                // 1.Copy
+                for (s = i, k = j; s < i + 8; s++, k++) {
+                    a = A[s][j];
+                    b = A[s][j+1];
+                    c = A[s][j+2];
+                    d = A[s][j+3];
+                    e = A[s][j+4];
+                    f = A[s][j+5];
+                    g = A[s][j+6];
+                    h = A[s][j+7];
+                    B[k][i] = a;
+                    B[k][i+1] = b;
+                    B[k][i+2] = c;
+                    B[k][i+3] = d;
+                    B[k][i+4] = e;
+                    B[k][i+5] = f;
+                    B[k][i+6] = g;
+                    B[k][i+7] = h;
+                }
+                // 2.transpose
+                for (s = 0; s < 8; s++) {
+                    for (k = s + 1; k < 8; k++) {
+                        a = B[j+s][i+k];
+                        B[j+s][i+k] = B[j+k][i+s];
+                        B[j+k][i+s] = a;
+                    }
                 }
             }
         }
