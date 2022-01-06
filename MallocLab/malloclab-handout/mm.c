@@ -1,13 +1,5 @@
 /*
- * mm-naive.c - The fastest, least memory-efficient malloc package.
- * 
- * In this naive approach, a block is allocated by simply incrementing
- * the brk pointer.  A block is pure payload. There are no headers or
- * footers.  Blocks are never coalesced or reused. Realloc is
- * implemented directly using mm_malloc and mm_free.
- *
- * NOTE TO STUDENTS: Replace this header comment with your own header
- * comment that gives a high level description of your solution.
+ * Use Implicit List to organize blocks.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -35,44 +27,153 @@ team_t team = {
     ""
 };
 
-/* single word (4) or double word (8) alignment */
-#define ALIGNMENT 8
+#define MAX(a, b) ((a) > (b) ? (a) : (b))
+/* Constants */
+#define WSIZE 4
+#define DSIZE 8
+#define CHUNKSIZE (1<<12)
+/* Pack a size and allocated bit into a word */
+#define PACK(size, allocated) ((size) | (allocated))
+/* Read and write a word at address p */
+#define GET(p) (*(unsigned int *)(p))
+#define PUT(p, val) (*(unsigned int *)(p) = (val))
+/* Get size and allocated field at address p */
+#define GET_SIZE(p) (GET(p) & ~0x7)
+#define GET_ALLOC(p) (GET(p) & 1)
+/* Operations of Block pointer bp */
+#define HEADER(bp) ((char*)(bp) - WSIZE) 
+#define FOOTER(bp) ((char*)(bp) + GET_SIZE(HEADER(bp)) - DSIZE)
+#define NEXT_BLOCK(bp) ((char*)(bp) + GET_SIZE(HEADER(bp)))
+#define PREV_BLOCK(bp) ((char*)(bp) - GET_SIZE((char*)(bp) - DSIZE))
 
-/* rounds up to the nearest multiple of ALIGNMENT */
-#define ALIGN(size) (((size) + (ALIGNMENT-1)) & ~0x7)
-
-
-#define SIZE_T_SIZE (ALIGN(sizeof(size_t)))
+static char* heap_listp;
 
 /* 
  * mm_init - initialize the malloc package.
  */
 int mm_init(void)
 {
+    heap_listp = (char*)mem_sbrk(4 * WSIZE);
+    if (heap_listp == ((void *)-1)) {
+        return -1;
+    }
+    PUT(heap_listp, 0); //padding
+    PUT(heap_listp + WSIZE, PACK(8, 1));//prologue block header
+    PUT(heap_listp + 2 * WSIZE, PACK(8, 1));//prologue block footer
+    PUT(heap_listp + 3 * WSIZE, PACK(0, 1));//epilogue block header
+    heap_listp = heap_listp + 2 * WSIZE;
+    
+    if (extendHeap(CHUNKSIZE / WSIZE) == NULL) {//create a free block of CHUNKSIZE
+        return -1;
+    }
+
     return 0;
 }
 
 /* 
- * mm_malloc - Allocate a block by incrementing the brk pointer.
- *     Always allocate a block whose size is a multiple of the alignment.
+ * mm_malloc - Find a fit free block. If not, allocate a new free block.
+ *
  */
 void *mm_malloc(size_t size)
 {
-    int newsize = ALIGN(size + SIZE_T_SIZE);
-    void *p = mem_sbrk(newsize);
-    if (p == (void *)-1)
-	return NULL;
-    else {
-        *(size_t *)p = size;
-        return (void *)((char *)p + SIZE_T_SIZE);
-    }
+    // int newsize = ALIGN(size + SIZE_T_SIZE);
+    // void *p = mem_sbrk(newsize);
+    // if (p == (void *)-1)
+	// return NULL;
+    // else {
+    //     *(size_t *)p = size;
+    //     return (void *)((char *)p + SIZE_T_SIZE);
+    // }
+    if (size == 0) 
+        return NULL;
+    size_t newsize = size + 2 * WSIZE;//adjusted size
+    newsize = (newsize + DSIZE - 1) & ~0x7;//alignment
+    void *ptr = find_fit(newsize);
+    if (ptr == NULL) 
+        ptr = extendHeap(MAX(newsize, CHUNKSIZE) / WSIZE);
+    if (ptr == NULL) 
+        return NULL;
+    use_block(ptr, newsize);
+    return ptr;
 }
 
 /*
- * mm_free - Freeing a block does nothing.
+ * find a free block larger than "size" 
+ */
+void *find_fit(size_t size)
+{
+    void *ptr = NEXT_BLOCK(heap_listp);
+    while (GET_SIZE(HEADER(ptr)) != 0) { //when ptr is not epilogue block
+        size_t ptr_size = GET_SIZE(HEADER(ptr));
+        int alloc = GET_ALLOC(HEADER(ptr));
+        if (ptr_size >= size && !alloc) {
+            break;
+        }
+        ptr = NEXT_BLOCK(ptr);
+    }
+    return GET_SIZE(HEADER(ptr)) != 0 ? ptr : NULL;
+}
+
+/* 
+ * Use a free block to get space of a given "size".
+ * Compare the size of a free block with given "size".If the difference 
+ * exceeds the threshold, the free block will be split.Otherwise, the 
+ * free block will be used directly.
+ */
+void use_block(void *ptr, size_t size) 
+{
+    size_t bsize = GET_SIZE(HEADER(ptr));
+    if (bsize - size > DSIZE) {
+        PUT(HEADER(ptr), PACK(size, 1));
+        PUT(FOOTER(ptr), PACK(size, 1));
+        PUT(HEADER(NEXT_BLOCK(ptr)), PACK(bsize - size, 0));
+        PUT(FOOTER(NEXT_BLOCK(ptr)), PACK(bsize - size, 0));
+    } else {
+        PUT(HEADER(ptr), PACK(bsize, 1));
+        PUT(FOOTER(ptr), PACK(bsize, 1));
+    }
+} 
+
+/*
+ * mm_free - Freeing a block and coalscue adjacent block.
  */
 void mm_free(void *ptr)
 {
+    size_t size = GET_SIZE(HEADER(ptr));
+    PUT(HEADER(ptr), PACK(size, 0));
+    PUT(FOOTER(ptr), PACK(size, 0));
+    coalesce(ptr);
+}
+
+void coalesce(void *ptr) 
+{
+    void *prev_p = PREV_BLOCK(ptr);
+    void *next_p = NEXT_BLOCK(ptr);
+    int prev_alloc = GET_ALLOC(HEADER(prev_p));
+    int next_alloc = GET_ALLOC(HEADER(next_p));
+    if (prev_alloc && next_alloc) {
+        return;
+    } else if (!prev_alloc && next_alloc) {
+        size_t combined_size = GET_SIZE(HEADER(prev_p)) + GET_SIZE(HEADER(ptr));
+        PUT(FOOTER(prev_p), 0);
+        PUT(HEADER(prev_p), PACK(combined_size, 0));
+        PUT(FOOTER(ptr), PACK(combined_size, 0));
+        PUT(HEADER(ptr), 0);
+    } else if (prev_alloc && !next_alloc) {
+        size_t combined_size = GET_SIZE(HEADER(next_p)) + GET_SIZE(HEADER(ptr));
+        PUT(FOOTER(next_p), PACK(combined_size, 0));
+        PUT(HEADER(next_p), 0);
+        PUT(FOOTER(ptr), 0);
+        PUT(HEADER(ptr), PACK(combined_size, 0));
+    } else {
+        size_t combined_size = GET_SIZE(HEADER(prev_p)) + GET_SIZE(HEADER(next_p)) + GET_SIZE(HEADER(ptr));
+        PUT(FOOTER(next_p), PACK(combined_size, 0));
+        PUT(HEADER(next_p), 0);
+        PUT(FOOTER(ptr), 0);
+        PUT(HEADER(ptr), 0);
+        PUT(FOOTER(prev_p), 0);
+        PUT(HEADER(prev_p), PACK(combined_size, 0));
+    }
 }
 
 /*
@@ -86,16 +187,31 @@ void *mm_realloc(void *ptr, size_t size)
     
     newptr = mm_malloc(size);
     if (newptr == NULL)
-      return NULL;
-    copySize = *(size_t *)((char *)oldptr - SIZE_T_SIZE);
+        return NULL;
+    copySize = GET_SIZE(HEADER(oldptr));
     if (size < copySize)
-      copySize = size;
+        copySize = size;
     memcpy(newptr, oldptr, copySize);
     mm_free(oldptr);
     return newptr;
 }
 
-
+/*
+ * Extend the heap by creating a free block of a given number of words
+ */
+void *extendHeap(size_t words)
+{
+    words = words % 2 == 0 ? words : words + 1;
+    size_t size = words * WSIZE;
+    void *new_bp;
+    if ((new_bp = mem_sbrk(size)) == ((void *)-1)) {
+        return NULL;
+    }
+    PUT(HEADER(new_bp), PACK(size, 0));//overwirte epilogue header
+    PUT(FOOTER(new_bp), PACK(size, 0));
+    PUT(HEADER(NEXT_BLOCK(new_bp)), PACK(0, 1));//restore epilogue header
+    return new_bp;
+}
 
 
 
