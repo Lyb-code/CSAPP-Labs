@@ -72,18 +72,10 @@ int mm_init(void)
 
 /* 
  * mm_malloc - Find a fit free block. If not, allocate a new free block.
- *
+ * param size: payload size
  */
 void *mm_malloc(size_t size)
 {
-    // int newsize = ALIGN(size + SIZE_T_SIZE);
-    // void *p = mem_sbrk(newsize);
-    // if (p == (void *)-1)
-	// return NULL;
-    // else {
-    //     *(size_t *)p = size;
-    //     return (void *)((char *)p + SIZE_T_SIZE);
-    // }
     if (size == 0) 
         return NULL;
     size_t newsize = size + 2 * WSIZE;//adjusted size
@@ -98,15 +90,16 @@ void *mm_malloc(size_t size)
 }
 
 /*
- * find a free block larger than "size" 
+ * find a free block larger than "bsize" 
+ * param bsize: block size(header+footer+payload+padding)
  */
-void *find_fit(size_t size)
+void *find_fit(size_t bsize)
 {
     void *ptr = NEXT_BLOCK(heap_listp);
     while (GET_SIZE(HEADER(ptr)) != 0) { //when ptr is not epilogue block
         size_t ptr_size = GET_SIZE(HEADER(ptr));
         int alloc = GET_ALLOC(HEADER(ptr));
-        if (ptr_size >= size && !alloc) {
+        if (ptr_size >= bsize && !alloc) {
             break;
         }
         ptr = NEXT_BLOCK(ptr);
@@ -115,27 +108,30 @@ void *find_fit(size_t size)
 }
 
 /* 
- * Use a free block to get space of a given "size".
- * Compare the size of a free block with given "size".If the difference 
+ * Use a free block to get space of a given "bsize".
+ * Compare the size of a free block with given "bsize".If the difference 
  * exceeds the threshold, the free block will be split.Otherwise, the 
  * free block will be used directly.
+ * param ptr: pointer to the payload of a free block
+ * param bsize: block size(header+footer+payload+padding)
  */
-void use_block(void *ptr, size_t size) 
+void use_block(void *ptr, size_t bsize) 
 {
-    size_t bsize = GET_SIZE(HEADER(ptr));
-    if (bsize - size > DSIZE) {
-        PUT(HEADER(ptr), PACK(size, 1));
-        PUT(FOOTER(ptr), PACK(size, 1));
-        PUT(HEADER(NEXT_BLOCK(ptr)), PACK(bsize - size, 0));
-        PUT(FOOTER(NEXT_BLOCK(ptr)), PACK(bsize - size, 0));
-    } else {
+    size_t oldbsize = GET_SIZE(HEADER(ptr));
+    if (oldbsize - bsize > DSIZE) {
         PUT(HEADER(ptr), PACK(bsize, 1));
         PUT(FOOTER(ptr), PACK(bsize, 1));
+        PUT(HEADER(NEXT_BLOCK(ptr)), PACK(oldbsize - bsize, 0));
+        PUT(FOOTER(NEXT_BLOCK(ptr)), PACK(oldbsize - bsize, 0));
+    } else {
+        PUT(HEADER(ptr), PACK(oldbsize, 1));
+        PUT(FOOTER(ptr), PACK(oldbsize, 1));
     }
 } 
 
 /*
  * mm_free - Freeing a block and coalscue adjacent block.
+ * param ptr: pointer to the payload of a allocated block
  */
 void mm_free(void *ptr)
 {
@@ -145,6 +141,10 @@ void mm_free(void *ptr)
     coalesce(ptr);
 }
 
+/*
+ * coalesce - coalesce adjacent free blocks.
+ * param ptr: pointer to the payload of a free block
+ */
 void coalesce(void *ptr) 
 {
     void *prev_p = PREV_BLOCK(ptr);
@@ -177,22 +177,41 @@ void coalesce(void *ptr)
 }
 
 /*
- * mm_realloc - Implemented simply in terms of mm_malloc and mm_free
+ * mm_realloc - Implemented by document semantics
+ * param ptr: pointer to the payload of a allocated block
+ * param size: new paload size
  */
 void *mm_realloc(void *ptr, size_t size)
 {
     void *oldptr = ptr;
     void *newptr;
-    size_t copySize;
-    
-    newptr = mm_malloc(size);
-    if (newptr == NULL)
-        return NULL;
-    copySize = GET_SIZE(HEADER(oldptr));
-    if (size < copySize)
-        copySize = size;
-    memcpy(newptr, oldptr, copySize);
-    mm_free(oldptr);
+    if (ptr == NULL)
+        newptr = mm_malloc(size);
+    else if (size == 0) {
+        mm_free(oldptr);
+        newptr = oldptr;
+    } else {
+        long oldbsize = GET_SIZE(HEADER(oldptr));//bsize = block size
+        long needbsize = (size + DSIZE + DSIZE - 1) & (~0x7);
+        long difference = oldbsize - needbsize;
+        if (difference > DSIZE) {
+            PUT(HEADER(oldptr), PACK(needbsize, 1));
+            PUT(FOOTER(oldptr), PACK(needbsize, 1));
+            PUT(HEADER(NEXT_BLOCK(oldptr)), PACK(difference, 0));
+            PUT(FOOTER(NEXT_BLOCK(oldptr)), PACK(difference, 0));
+            coalesce(NEXT_BLOCK(oldptr));
+            //memset((char*)oldptr, 0, needbsize - DSIZE - size);
+            newptr = oldptr;
+        } else {
+            newptr = mm_malloc(size);
+            if (newptr == NULL)
+                return NULL;
+            size_t copySize = oldbsize - DSIZE;//payload size
+            copySize = copySize < size ? copySize : size;
+            memcpy(newptr, oldptr, copySize);
+            mm_free(oldptr);
+        }
+    }
     return newptr;
 }
 
