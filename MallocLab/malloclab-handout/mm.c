@@ -145,35 +145,39 @@ void mm_free(void *ptr)
  * coalesce - coalesce adjacent free blocks.
  * param ptr: pointer to the payload of a free block
  */
-void coalesce(void *ptr) 
+static void *coalesce(void *ptr) 
 {
     void *prev_p = PREV_BLOCK(ptr);
     void *next_p = NEXT_BLOCK(ptr);
     int prev_alloc = GET_ALLOC(HEADER(prev_p));
     int next_alloc = GET_ALLOC(HEADER(next_p));
+    size_t combined_size = GET_SIZE(HEADER(ptr));
     if (prev_alloc && next_alloc) {
-        return;
+        return ptr;
     } else if (!prev_alloc && next_alloc) {
-        size_t combined_size = GET_SIZE(HEADER(prev_p)) + GET_SIZE(HEADER(ptr));
+        combined_size += GET_SIZE(HEADER(prev_p));
         PUT(FOOTER(prev_p), 0);
         PUT(HEADER(prev_p), PACK(combined_size, 0));
         PUT(FOOTER(ptr), PACK(combined_size, 0));
         PUT(HEADER(ptr), 0);
+        ptr = prev_p;
     } else if (prev_alloc && !next_alloc) {
-        size_t combined_size = GET_SIZE(HEADER(next_p)) + GET_SIZE(HEADER(ptr));
+        combined_size += GET_SIZE(HEADER(next_p));
         PUT(FOOTER(next_p), PACK(combined_size, 0));
         PUT(HEADER(next_p), 0);
         PUT(FOOTER(ptr), 0);
         PUT(HEADER(ptr), PACK(combined_size, 0));
     } else {
-        size_t combined_size = GET_SIZE(HEADER(prev_p)) + GET_SIZE(HEADER(next_p)) + GET_SIZE(HEADER(ptr));
+        combined_size += GET_SIZE(HEADER(prev_p)) + GET_SIZE(HEADER(next_p));
         PUT(FOOTER(next_p), PACK(combined_size, 0));
         PUT(HEADER(next_p), 0);
         PUT(FOOTER(ptr), 0);
         PUT(HEADER(ptr), 0);
         PUT(FOOTER(prev_p), 0);
         PUT(HEADER(prev_p), PACK(combined_size, 0));
+        ptr = prev_p;
     }
+    return ptr;
 }
 
 /*
@@ -229,7 +233,8 @@ void *extendHeap(size_t words)
     PUT(HEADER(new_bp), PACK(size, 0));//overwirte epilogue header
     PUT(FOOTER(new_bp), PACK(size, 0));
     PUT(HEADER(NEXT_BLOCK(new_bp)), PACK(0, 1));//restore epilogue header
-    return new_bp;
+    /* Coalesce if previous block was free */
+    return coalesce(new_bp);
 }
 
 
