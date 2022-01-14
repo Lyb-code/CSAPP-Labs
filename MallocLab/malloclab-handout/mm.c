@@ -93,8 +93,13 @@ void *mm_malloc(size_t size)
  * find a free block larger than "bsize" 
  * param bsize: block size(header+footer+payload+padding)
  */
-void *find_fit(size_t bsize)
+static void *find_fit(size_t bsize)
 {
+    //return first_fit(bsize);
+    return best_fit(bsize);
+}
+
+static void* first_fit(size_t bsize) {
     void *ptr = NEXT_BLOCK(heap_listp);
     while (GET_SIZE(HEADER(ptr)) != 0) { //when ptr is not epilogue block
         size_t ptr_size = GET_SIZE(HEADER(ptr));
@@ -107,6 +112,24 @@ void *find_fit(size_t bsize)
     return GET_SIZE(HEADER(ptr)) != 0 ? ptr : NULL;
 }
 
+static void *best_fit(size_t bsize) {
+    void *ptr = NEXT_BLOCK(heap_listp);
+    size_t ptr_size;
+    void* best = NULL;
+    size_t min_size = 0;
+
+    while ((ptr_size = GET_SIZE(HEADER(ptr))) != 0) { //when ptr is not epilogue block
+        int alloc = GET_ALLOC(HEADER(ptr));
+        if (ptr_size >= bsize && !alloc && (min_size == 0 || min_size > ptr_size)) {
+            min_size = ptr_size;
+            best = ptr;
+        }
+        ptr = NEXT_BLOCK(ptr);
+    }
+
+    return best;
+}
+
 /* 
  * Use a free block to get space of a given "bsize".
  * Compare the size of a free block with given "bsize".If the difference 
@@ -115,7 +138,7 @@ void *find_fit(size_t bsize)
  * param ptr: pointer to the payload of a free block
  * param bsize: block size(header+footer+payload+padding)
  */
-void use_block(void *ptr, size_t bsize) 
+static void use_block(void *ptr, size_t bsize) 
 {
     size_t oldbsize = GET_SIZE(HEADER(ptr));
     if (oldbsize - bsize > DSIZE) {
@@ -222,7 +245,7 @@ void *mm_realloc(void *ptr, size_t size)
 /*
  * Extend the heap by creating a free block of a given number of words
  */
-void *extendHeap(size_t words)
+static void *extendHeap(size_t words)
 {
     words = words % 2 == 0 ? words : words + 1;
     size_t size = words * WSIZE;
