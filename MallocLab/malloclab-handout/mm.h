@@ -9,7 +9,12 @@ static void *first_fit(size_t bsize);
 static void *best_fit(size_t bsize);
 static void use_block(void *ptr, size_t bsize);
 static void *extendHeap(size_t words);
-static void *coalesce(void *ptr);
+static void addFreeBlock(void *bp);
+static void delFreeBlock(void *bp);
+static int size_class(size_t size);
+static void LIFO(void *listp, void *bp);
+static void AddressOrdered(void *listp, void *bp);
+static void *coalesce(void *bp);
 
 /* 
  * Students work in teams of one or two.  Teams enter their team name, 

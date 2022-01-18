@@ -1,5 +1,6 @@
 /*
- * Use Implicit List to organize blocks.
+ * Use Segregated Explicit Lists to organize free blocks.
+ * Use Implicit List to organize all blocks.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -45,23 +46,44 @@ team_t team = {
 #define FOOTER(bp) ((char*)(bp) + GET_SIZE(HEADER(bp)) - DSIZE)
 #define NEXT_BLOCK(bp) ((char*)(bp) + GET_SIZE(HEADER(bp)))
 #define PREV_BLOCK(bp) ((char*)(bp) - GET_SIZE((char*)(bp) - DSIZE))
+/* The address in the block where the predecessor and successor addresses are stored*/
+#define PRED(bp) ((char*)(bp) + WSIZE)
+#define SUCC(bp) ((char*)(bp))
+/* Get address of predecessor and successor block*/
+#define PRED_BLOCK(bp) GET(PRED(bp))
+#define SUCC_BLOCK(bp) GET(SUCC(bp))
 
+/* Pointer to payload of prologue block */
 static char* heap_listp;
+/* Pointer to explicit free list of first size class */
+static char* seg_listsp;
 
 /* 
  * mm_init - initialize the malloc package.
  */
 int mm_init(void)
 {
-    heap_listp = (char*)mem_sbrk(4 * WSIZE);
+    heap_listp = (char*)mem_sbrk(12 * WSIZE);
     if (heap_listp == ((void *)-1)) {
         return -1;
     }
-    PUT(heap_listp, 0); //padding
-    PUT(heap_listp + WSIZE, PACK(8, 1));//prologue block header
-    PUT(heap_listp + 2 * WSIZE, PACK(8, 1));//prologue block footer
-    PUT(heap_listp + 3 * WSIZE, PACK(0, 1));//epilogue block header
-    heap_listp = heap_listp + 2 * WSIZE;
+    //Nine size classes
+    PUT(heap_listp, NULL); //16~31
+    PUT(heap_listp + WSIZE, NULL); //32~63
+    PUT(heap_listp + 2 * WSIZE, NULL); //64~127
+    PUT(heap_listp + 3 * WSIZE, NULL); //128~255
+    PUT(heap_listp + 4 * WSIZE, NULL); //256~511
+    PUT(heap_listp + 5 * WSIZE, NULL); //512~1023
+    PUT(heap_listp + 6 * WSIZE, NULL); //1024~2047
+    PUT(heap_listp + 7 * WSIZE, NULL); //2048~4095
+    PUT(heap_listp + 8 * WSIZE, NULL); //4096~INF
+
+    PUT(heap_listp + 9 * WSIZE, PACK(8, 1));//prologue block header
+    PUT(heap_listp + 10 * WSIZE, PACK(8, 1));//prologue block footer
+    PUT(heap_listp + 11 * WSIZE, PACK(0, 1));//epilogue block header
+
+    seg_listsp = heap_listp;
+    heap_listp = heap_listp + 10 * WSIZE;
     
     if (extendHeap(CHUNKSIZE / WSIZE) == NULL) {//create a free block of CHUNKSIZE
         return -1;
@@ -70,9 +92,9 @@ int mm_init(void)
     return 0;
 }
 
-/* 
+/** 
  * mm_malloc - Find a fit free block. If not, allocate a new free block.
- * param size: payload size
+ * @param size: payload size
  */
 void *mm_malloc(size_t size)
 {
@@ -89,124 +111,130 @@ void *mm_malloc(size_t size)
     return ptr;
 }
 
-/*
+/**
  * find a free block larger than "bsize" 
- * param bsize: block size(header+footer+payload+padding)
+ * @param bsize: block size(header+footer+payload+padding)
  */
 static void *find_fit(size_t bsize)
 {
-    //return first_fit(bsize);
-    return best_fit(bsize);
+    return first_fit(bsize);
+    //return best_fit(bsize);
 }
 
 static void* first_fit(size_t bsize) {
-    void *ptr = NEXT_BLOCK(heap_listp);
-    while (GET_SIZE(HEADER(ptr)) != 0) { //when ptr is not epilogue block
-        size_t ptr_size = GET_SIZE(HEADER(ptr));
-        int alloc = GET_ALLOC(HEADER(ptr));
-        if (ptr_size >= bsize && !alloc) {
-            break;
+    void *listp, *bp;
+    int index = size_class(bsize);
+    while (index <= 8) {
+        listp = seg_listsp + index * WSIZE;
+        bp = SUCC_BLOCK(listp);
+        while (bp) {
+            if (GET_SIZE(HEADER(bp)) >= bsize)
+                return bp;
+            bp = SUCC_BLOCK(bp);
         }
-        ptr = NEXT_BLOCK(ptr);
+        index++;
     }
-    return GET_SIZE(HEADER(ptr)) != 0 ? ptr : NULL;
+    return NULL;
 }
 
 static void *best_fit(size_t bsize) {
-    void *ptr = NEXT_BLOCK(heap_listp);
-    size_t ptr_size;
-    void* best = NULL;
+    void *listp, *bp, *best = NULL;
+    size_t curr_size;
     size_t min_size = 0;
-
-    while ((ptr_size = GET_SIZE(HEADER(ptr))) != 0) { //when ptr is not epilogue block
-        int alloc = GET_ALLOC(HEADER(ptr));
-        if (ptr_size >= bsize && !alloc && (min_size == 0 || min_size > ptr_size)) {
-            min_size = ptr_size;
-            best = ptr;
+    int index = size_class(bsize);
+    while (index <= 8) {
+        listp = seg_listsp + index * WSIZE;
+        bp = SUCC_BLOCK(listp);
+        while (bp) {
+            curr_size = GET_SIZE(HEADER(bp));
+            if (curr_size >= bsize && (min_size == 0 || curr_size < min_size)) {
+                min_size = curr_size;
+                best = bp;
+            }
+            bp = SUCC_BLOCK(bp);
         }
-        ptr = NEXT_BLOCK(ptr);
+        if (best) break;
+        index++;
     }
-
     return best;
 }
 
-/* 
+/** 
  * Use a free block to get space of a given "bsize".
- * Compare the size of a free block with given "bsize".If the difference 
- * exceeds the threshold, the free block will be split.Otherwise, the 
+ * Compare the size of a free block with given "bsize". If the difference 
+ * exceeds the threshold, the free block will be split. Otherwise, the 
  * free block will be used directly.
- * param ptr: pointer to the payload of a free block
- * param bsize: block size(header+footer+payload+padding)
+ * @param bp: block pointer to the payload of a free block
+ * @param bsize: block size(header+footer+payload+padding)
  */
-static void use_block(void *ptr, size_t bsize) 
+static void use_block(void *bp, size_t bsize) 
 {
-    size_t oldbsize = GET_SIZE(HEADER(ptr));
-    if (oldbsize - bsize > DSIZE) {
-        PUT(HEADER(ptr), PACK(bsize, 1));
-        PUT(FOOTER(ptr), PACK(bsize, 1));
-        PUT(HEADER(NEXT_BLOCK(ptr)), PACK(oldbsize - bsize, 0));
-        PUT(FOOTER(NEXT_BLOCK(ptr)), PACK(oldbsize - bsize, 0));
+    size_t oldbsize = GET_SIZE(HEADER(bp));
+    delFreeBlock(bp);
+    if (oldbsize - bsize > 2 * DSIZE) {
+        PUT(HEADER(bp), PACK(bsize, 1));
+        PUT(FOOTER(bp), PACK(bsize, 1));
+        PUT(HEADER(NEXT_BLOCK(bp)), PACK(oldbsize - bsize, 0));
+        PUT(FOOTER(NEXT_BLOCK(bp)), PACK(oldbsize - bsize, 0));
+        addFreeBlock(NEXT_BLOCK(bp));
     } else {
-        PUT(HEADER(ptr), PACK(oldbsize, 1));
-        PUT(FOOTER(ptr), PACK(oldbsize, 1));
+        PUT(HEADER(bp), PACK(oldbsize, 1));
+        PUT(FOOTER(bp), PACK(oldbsize, 1));
     }
 } 
 
-/*
+/**
  * mm_free - Freeing a block and coalscue adjacent block.
- * param ptr: pointer to the payload of a allocated block
+ * @param ptr: block pointer to the payload of a allocated block
  */
 void mm_free(void *ptr)
 {
     size_t size = GET_SIZE(HEADER(ptr));
     PUT(HEADER(ptr), PACK(size, 0));
     PUT(FOOTER(ptr), PACK(size, 0));
-    coalesce(ptr);
+    ptr = coalesce(ptr);
+    addFreeBlock(ptr);
 }
 
-/*
+/**
  * coalesce - coalesce adjacent free blocks.
- * param ptr: pointer to the payload of a free block
+ * @param bp: block pointer to the payload of a free block
  */
-static void *coalesce(void *ptr) 
+static void *coalesce(void *bp) 
 {
-    void *prev_p = PREV_BLOCK(ptr);
-    void *next_p = NEXT_BLOCK(ptr);
+    void *prev_p = PREV_BLOCK(bp);
+    void *next_p = NEXT_BLOCK(bp);
     int prev_alloc = GET_ALLOC(HEADER(prev_p));
     int next_alloc = GET_ALLOC(HEADER(next_p));
-    size_t combined_size = GET_SIZE(HEADER(ptr));
+    size_t combined_size = GET_SIZE(HEADER(bp));
     if (prev_alloc && next_alloc) {
-        return ptr;
+        return bp;
     } else if (!prev_alloc && next_alloc) {
+        delFreeBlock(prev_p);
         combined_size += GET_SIZE(HEADER(prev_p));
-        PUT(FOOTER(prev_p), 0);
         PUT(HEADER(prev_p), PACK(combined_size, 0));
-        PUT(FOOTER(ptr), PACK(combined_size, 0));
-        PUT(HEADER(ptr), 0);
-        ptr = prev_p;
+        PUT(FOOTER(bp), PACK(combined_size, 0));
+        bp = prev_p;
     } else if (prev_alloc && !next_alloc) {
+        delFreeBlock(next_p);
         combined_size += GET_SIZE(HEADER(next_p));
+        PUT(HEADER(bp), PACK(combined_size, 0));
         PUT(FOOTER(next_p), PACK(combined_size, 0));
-        PUT(HEADER(next_p), 0);
-        PUT(FOOTER(ptr), 0);
-        PUT(HEADER(ptr), PACK(combined_size, 0));
     } else {
+        delFreeBlock(prev_p);
+        delFreeBlock(next_p);
         combined_size += GET_SIZE(HEADER(prev_p)) + GET_SIZE(HEADER(next_p));
-        PUT(FOOTER(next_p), PACK(combined_size, 0));
-        PUT(HEADER(next_p), 0);
-        PUT(FOOTER(ptr), 0);
-        PUT(HEADER(ptr), 0);
-        PUT(FOOTER(prev_p), 0);
         PUT(HEADER(prev_p), PACK(combined_size, 0));
-        ptr = prev_p;
+        PUT(FOOTER(next_p), PACK(combined_size, 0));
+        bp = prev_p;
     }
-    return ptr;
+    return bp;
 }
 
-/*
+/**
  * mm_realloc - Implemented by document semantics
- * param ptr: pointer to the payload of a allocated block
- * param size: new paload size
+ * @param ptr: block pointer to the payload of a allocated block
+ * @param size: new paload size
  */
 void *mm_realloc(void *ptr, size_t size)
 {
@@ -221,13 +249,12 @@ void *mm_realloc(void *ptr, size_t size)
         long oldbsize = GET_SIZE(HEADER(oldptr));//bsize = block size
         long needbsize = (size + DSIZE + DSIZE - 1) & (~0x7);
         long difference = oldbsize - needbsize;
-        if (difference > DSIZE) {
+        if (difference > 2 * DSIZE) {
             PUT(HEADER(oldptr), PACK(needbsize, 1));
             PUT(FOOTER(oldptr), PACK(needbsize, 1));
             PUT(HEADER(NEXT_BLOCK(oldptr)), PACK(difference, 0));
             PUT(FOOTER(NEXT_BLOCK(oldptr)), PACK(difference, 0));
-            coalesce(NEXT_BLOCK(oldptr));
-            //memset((char*)oldptr, 0, needbsize - DSIZE - size);
+            addFreeBlock(coalesce(NEXT_BLOCK(oldptr)));
             newptr = oldptr;
         } else {
             newptr = mm_malloc(size);
@@ -255,14 +282,100 @@ static void *extendHeap(size_t words)
     }
     PUT(HEADER(new_bp), PACK(size, 0));//overwirte epilogue header
     PUT(FOOTER(new_bp), PACK(size, 0));
+    PUT(PRED(new_bp), NULL);
+    PUT(SUCC(new_bp), NULL);
     PUT(HEADER(NEXT_BLOCK(new_bp)), PACK(0, 1));//restore epilogue header
     /* Coalesce if previous block was free */
-    return coalesce(new_bp);
+    new_bp = coalesce(new_bp);
+    addFreeBlock(new_bp);
+    return new_bp;
 }
 
+/**
+ * Add a free block to the explicit list of corresponding size classes
+ * @param bp: block pointer to the payload of a free block
+ */
+static void addFreeBlock(void *bp)
+{
+    size_t bsize = GET_SIZE(HEADER(bp));
+    int index = size_class(bsize);
+    char* listp = seg_listsp + index * WSIZE;
+    LIFO(listp, bp);
+    //AddressOrdered(listp, bp);
+}
 
+/**
+ * Delete the free block from the explicit list of corresponding size classes
+ * @param bp: block pointer to the payload of a free block
+ */
+static void delFreeBlock(void *bp)
+{
+    void *pred_block = PRED_BLOCK(bp);
+    void *succ_block = SUCC_BLOCK(bp);
+    PUT(SUCC(pred_block), succ_block);
+    if (succ_block != NULL)
+        PUT(PRED(succ_block), pred_block);
+}
 
+/**
+ * Get size class of given "size".
+ * Note that 16~31 correspond to class 0.
+ */
+static int size_class(size_t size)
+{
+    if (size >= 4096)
+        return 8;
+    int sc = 0;
+    size >>= 5;
+    while (size) {
+        size >>= 1;
+        sc++;
+    }
+    return sc;
+}
 
+/**
+ * Insert a free block according to LIFO.
+ * @param listp : pointer to the head of explicit free list 
+ * @param bp : block pointer to the payload of a free block
+ */
+static void LIFO(void *listp, void *bp)
+{
+    void *first_block = SUCC_BLOCK(listp);
+    //bp <--> first_block
+    PUT(SUCC(bp), first_block);
+    if (first_block != NULL) {
+        PUT(PRED(first_block), bp);    
+    }
+    //listp <--> bp
+    PUT(SUCC(listp), bp);
+    PUT(PRED(bp), listp);
+}
+
+/**
+ * Insert a free block according to AddressOrdered policy.
+ * @param listp : pointer to the head of explicit free list 
+ * @param bp : block pointer to the payload of a free block
+ */
+static void AddressOrdered(void *listp, void *bp)
+{
+    void *pred_block = listp, *succ_block = SUCC_BLOCK(listp);
+    while(succ_block) {
+        if (succ_block > bp) {
+            break;
+        }
+        pred_block = succ_block;
+        succ_block = SUCC_BLOCK(succ_block);
+    }
+
+    //pred_block <--> bp
+    PUT(SUCC(pred_block), bp);
+    PUT(PRED(bp), pred_block);
+    //bp <--> succ_block
+    PUT(SUCC(bp), succ_block);
+    if (succ_block != NULL) 
+        PUT(PRED(succ_block), bp);
+}
 
 
 
